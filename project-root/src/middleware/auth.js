@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import logger from '../logger.js';
 
 const auth = async (req, res, next) => {
   try {
@@ -16,9 +17,10 @@ const auth = async (req, res, next) => {
       return res.status(401).json({ message: 'Пользователь не найден' });
     }
 
-    req.user = user; // Добавляем объект пользователя в запрос
+    req.user = user;
     next();
   } catch (err) {
+    logger.warn(`Ошибка аутентификации: ${err.message}`);
     res.status(401).json({ message: 'Недействительный токен' });
   }
 };

@@ -1,10 +1,11 @@
 import socketIo from 'socket.io';
 import jwt from 'jsonwebtoken';
 import User from './models/User.js';
+import { chatMessageHandler, thankGuideHandler } from './socket/handlers.js';
+import logger from './logger.js';
 
 let io = null;
 
-// Инициализация Socket.io
 export const initSocket = (server) => {
   io = socketIo(server, {
     cors: {
@@ -14,7 +15,6 @@ export const initSocket = (server) => {
     }
   });
 
-  // Middleware аутентификации
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
@@ -22,16 +22,12 @@ export const initSocket = (server) => {
         return next(new Error('Authentication error: Token is required'));
       }
 
-      // Верификация токена
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
-      // Поиск пользователя в БД
       const user = await User.findById(decoded.userId);
       if (!user) {
         return next(new Error('Authentication error: User not found'));
       }
 
-      // Добавляем ID пользователя в сокет
       socket.userId = user._id.toString();
       next();
     } catch (err) {
@@ -39,23 +35,30 @@ export const initSocket = (server) => {
     }
   });
 
-  // Обработка подключений
   io.on('connection', (socket) => {
-    console.log(`⚡️ New socket connection: ${socket.id} for user ${socket.userId}`);
+    logger.info(`Сокет подключен: ${socket.id} для пользователя ${socket.userId}`);
 
-    // Присоединяем сокет к комнате пользователя
-    socket.join(socket.userId);
+    // Присоединяем к комнате страны
+    User.findById(socket.userId)
+      .then(user => {
+        if (user && user.country) {
+          socket.join(user.country);
+          logger.debug(`Пользователь ${user.nickname} присоединен к комнате ${user.country}`);
+        }
+      });
 
-    // Обработка отключения
+    // Обработчики событий
+    socket.on('chatMessage', (data) => chatMessageHandler(socket, data));
+    socket.on('thankGuide', (guideId) => thankGuideHandler(socket, guideId));
+
     socket.on('disconnect', () => {
-      console.log(`🔥 Socket disconnected: ${socket.id}`);
+      logger.info(`Сокет отключен: ${socket.id}`);
     });
   });
 
   return io;
 };
 
-// Получение экземпляра Socket.io
 export const getIo = () => {
   if (!io) {
     throw new Error('Socket.io not initialized!');

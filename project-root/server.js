@@ -9,8 +9,9 @@ import authRoutes from './src/routes/authRoutes.js';
 import gameRoutes from './src/routes/gameRoutes.js';
 import adminRoutes from './src/routes/adminRoutes.js';
 import { startLeaderboardUpdates } from './src/services/leaderboardService.js';
+import errorHandler from './src/middleware/errorHandler.js';
+import logger from './src/logger.js';
 
-// Загрузка переменных окружения
 dotenv.config();
 
 const app = express();
@@ -20,10 +21,17 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors({
   origin: process.env.CLIENT_URL,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Добавляем логгер в запросы
+app.use((req, res, next) => {
+  req.logger = logger;
+  next();
+});
 
 // Подключение к базе данных
 connectDB();
@@ -36,17 +44,23 @@ app.use('/api/auth', authRoutes);
 app.use('/api/game', gameRoutes);
 app.use('/api/admin', adminRoutes);
 
+// Обработчик ошибок
+app.use(errorHandler);
+
 // Старт сервера
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  logger.info(`🚀 Сервер запущен на порту ${PORT}`);
   
   // Запускаем обновление таблицы лидеров
   startLeaderboardUpdates();
   
-  // Опционально: запуск игрового цикла
+  // Запуск игрового цикла
   if (process.env.ENABLE_GAME_LOOP === 'true') {
     import('./src/services/gameLoopService.js')
-      .then(module => module.startGameLoop())
-      .catch(err => console.error('Failed to start game loop:', err));
+      .then(module => {
+        module.startGameLoop();
+        logger.info('Игровой цикл запущен');
+      })
+      .catch(err => logger.error('Ошибка запуска игрового цикла:', err));
   }
 });

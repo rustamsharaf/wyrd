@@ -1,12 +1,16 @@
 import GameRound from '../models/GameRound.js';
 import calculationService from './calculationService.js';
 import { getIo } from '../socket.js';
+import logger from '../logger.js';
 
+// Конфигурация по умолчанию
 const config = {
-  BETTING_PHASE: 35000,
-  RESULT_PHASE: 10000,
-  BREAK_PHASE: 17500,
-  TOTAL_ROUND_TIME: 62500
+  BETTING_PHASE: parseInt(process.env.BETTING_PHASE) || 35000,
+  RESULT_PHASE: parseInt(process.env.RESULT_PHASE) || 10000,
+  BREAK_PHASE: parseInt(process.env.BREAK_PHASE) || 17500,
+  TOTAL_ROUND_TIME: function() {
+    return this.BETTING_PHASE + this.RESULT_PHASE + this.BREAK_PHASE;
+  }
 };
 
 let currentRound = null;
@@ -39,36 +43,38 @@ async function createRound() {
     status: round.status
   });
   
+  logger.info(`🆕 Начат новый раунд ${round._id}`);
   return round;
 }
 
 // Запуск игрового цикла
 function startGameLoop() {
-  console.log('🔄 Game loop started');
+  logger.info('🔄 Игровой цикл запущен');
   runNewRound();
   
   gameInterval = setInterval(() => {
     runNewRound();
-  }, config.TOTAL_ROUND_TIME);
+  }, config.TOTAL_ROUND_TIME());
 }
 
 // Остановка игрового цикла
 function stopGameLoop() {
   clearInterval(gameInterval);
-  console.log('⏹️ Game loop stopped');
+  logger.info('⏹️ Игровой цикл остановлен');
 }
 
 // Выбор победного шара
 function selectWinningBall() {
   const random = Math.random();
-  return random < 0.05 ? 'joker' : Math.floor(Math.random() * 10);
+  const jokerProb = parseFloat(process.env.JOKER_PROBABILITY) || 0.05;
+  return random < jokerProb ? 'joker' : Math.floor(Math.random() * 10);
 }
 
 // Запуск нового раунда
 async function runNewRound() {
   try {
     roundCounter++;
-    console.log(`🆕 Starting round ${roundCounter}`);
+    logger.debug(`Запуск раунда ${roundCounter}`);
     
     // Создаем новый раунд
     const round = await createRound();
@@ -76,12 +82,12 @@ async function runNewRound() {
     // Фаза приема ставок
     setTimeout(async () => {
       isBettingActive = false;
-      console.log('⛔ Betting phase ended');
+      logger.info('⛔ Прием ставок завершен');
       
       // Фаза обработки результатов
       setTimeout(async () => {
         const winningBall = selectWinningBall();
-        console.log(`🎱 Winning ball: ${winningBall}`);
+        logger.info(`🎱 Выигрышный шар: ${winningBall}`);
         
         // Обновляем раунд
         await GameRound.findByIdAndUpdate(round._id, {
@@ -94,19 +100,19 @@ async function runNewRound() {
         
         // Фаза перерыва
         setTimeout(() => {
-          console.log('⏸️ Break before next round');
+          logger.debug('⏸️ Перерыв перед следующим раундом');
         }, config.RESULT_PHASE);
       }, 100);
     }, config.BETTING_PHASE);
   } catch (err) {
-    console.error('Game loop error:', err);
+    logger.error(`Ошибка игрового цикла: ${err.message}`);
   }
 }
 
 // Обновление конфигурации
 function updateConfig(newConfig) {
   Object.assign(config, newConfig);
-  console.log('⚙️ Config updated:', config);
+  logger.info('⚙️ Конфигурация обновлена', { newConfig });
   stopGameLoop();
   startGameLoop();
 }
@@ -121,21 +127,29 @@ function getCurrentStatus() {
     };
   }
   
-  const elapsed = Date.now() - currentRound.startTime;
+  const now = new Date();
+  const startTime = new Date(currentRound.startTime);
+  const elapsed = now - startTime;
+  
   let timeLeft = 0;
+  let status = 'break';
   
   if (elapsed < config.BETTING_PHASE) {
-    timeLeft = Math.round((config.BETTING_PHASE - elapsed) / 1000);
+    timeLeft = Math.floor((config.BETTING_PHASE - elapsed) / 1000);
+    status = 'betting';
   } else if (elapsed < config.BETTING_PHASE + config.RESULT_PHASE) {
     timeLeft = 0;
+    status = 'processing';
   } else {
-    timeLeft = Math.round((config.TOTAL_ROUND_TIME - elapsed) / 1000);
+    timeLeft = Math.floor((config.TOTAL_ROUND_TIME() - elapsed) / 1000);
+    status = 'break';
   }
   
   return {
-    isBettingActive,
+    isBettingActive: status === 'betting',
     currentRound,
-    timeLeft
+    timeLeft,
+    status
   };
 }
 
