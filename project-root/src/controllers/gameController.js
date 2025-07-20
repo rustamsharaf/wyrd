@@ -1,11 +1,10 @@
-// src/controllers/gameController.js
 import Joi from 'joi';
 import Bet from '../models/Bet.js';
 import User from '../models/User.js';
 import GameRound from '../models/GameRound.js';
 import { getIo } from '../socket.js';
 
-// Схема валидации для ставки
+// Схема валидации
 const betSchema = Joi.object({
   ballNumber: Joi.string().valid('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'joker').required(),
   amount: Joi.number().integer().min(1).max(50000).required(),
@@ -17,14 +16,15 @@ const betSchema = Joi.object({
   })
 });
 
-// Максимальный лимит ставки
+// Максимальная ставка
 const MAX_BET_AMOUNT = 50000;
 
 export const placeBet = async (req, res) => {
   try {
-    const userId = req.user.id; // Предполагается, что в мидлваре auth мы сохранили user в req.user
+    const user = req.user;
     const { error, value } = betSchema.validate(req.body);
     
+    // Валидация
     if (error) {
       return res.status(400).json({ 
         success: false, 
@@ -34,43 +34,34 @@ export const placeBet = async (req, res) => {
 
     const { ballNumber, amount, isSeriesBet, seriesId } = value;
 
-    // Проверка максимального лимита
+    // Проверка лимита
     if (amount > MAX_BET_AMOUNT) {
       return res.status(400).json({
         success: false,
-        message: `Максимальная сумма ставки ${MAX_BET_AMOUNT}`
+        message: `Maximum bet amount is ${MAX_BET_AMOUNT}`
       });
     }
 
-    // Получаем пользователя с актуальным балансом
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'Пользователь не найден'
-      });
-    }
-
-    // Проверяем баланс
+    // Проверка баланса
     if (user.currency < amount) {
       return res.status(400).json({
         success: false,
-        message: 'Недостаточно средств'
+        message: 'Insufficient funds'
       });
     }
 
-    // Получаем активный раунд
+    // Поиск активного раунда
     const currentRound = await GameRound.findOne({ status: 'betting' });
     if (!currentRound) {
       return res.status(400).json({
         success: false,
-        message: 'Прием ставок завершен'
+        message: 'Betting is closed for current round'
       });
     }
 
-    // Создаем ставку
+    // Создание ставки
     const bet = new Bet({
-      user: userId,
+      user: user._id,
       round: currentRound._id,
       ballNumber,
       amount,
@@ -81,38 +72,39 @@ export const placeBet = async (req, res) => {
     // Списание средств
     user.currency -= amount;
     await user.save();
-    
-    // Сохраняем ставку
     await bet.save();
 
-    // Обновляем общую сумму ставок в раунде
+    // Обновление данных раунда
     currentRound.totalBetAmount = (currentRound.totalBetAmount || 0) + amount;
     
-    // Обновляем сумму ставок по конкретному шару
-    const betsByBall = currentRound.betsByBall || new Map();
-    const currentBallAmount = betsByBall.get(ballNumber) || 0;
-    betsByBall.set(ballNumber, currentBallAmount + amount);
+    // Обновление ставок по шарам
+    const betsByBall = currentRound.betsByBall || {};
+    betsByBall[ballNumber] = (betsByBall[ballNumber] || 0) + amount;
     currentRound.betsByBall = betsByBall;
     
     await currentRound.save();
 
-    // Рассчитываем распределение ставок в процентах
+    // Расчет распределения ставок
     const distribution = {};
-    for (const [ball, ballAmount] of betsByBall.entries()) {
-      distribution[ball] = parseFloat(((ballAmount / currentRound.totalBetAmount) * 100).toFixed(2));
-    }
+    Object.entries(betsByBall).forEach(([ball, ballAmount]) => {
+      distribution[ball] = parseFloat(
+        ((ballAmount / currentRound.totalBetAmount) * 100).toFixed(2)
+    });
 
-    // Отправляем обновление через сокет
+    // Отправка события обновления ставок
     const io = getIo();
-    if (io) {
-      io.emit('betUpdate', {
-        roundId: currentRound._id,
-        totalBetAmount: currentRound.totalBetAmount,
-        betsDistribution: distribution
-      });
-    }
+    io.emit('betUpdate', {
+      roundId: currentRound._id,
+      totalBetAmount: currentRound.totalBetAmount,
+      betsDistribution: distribution
+    });
 
-    // Отправляем ответ
+    // Отправка обновления баланса пользователю
+    io.to(user._id.toString()).emit('balanceUpdate', {
+      currency: user.currency
+    });
+
+    // Ответ клиенту
     res.status(200).json({
       success: true,
       betId: bet._id,
@@ -120,10 +112,10 @@ export const placeBet = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Ошибка при размещении ставки:', err);
+    console.error('Bet placement error:', err);
     res.status(500).json({
       success: false,
-      message: 'Ошибка сервера'
+      message: 'Server error'
     });
   }
 };
