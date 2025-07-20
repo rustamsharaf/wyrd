@@ -1,22 +1,23 @@
-import express from 'express';
-import rateLimit from 'express-rate-limit';
-import { placeBet, getTimeStatus } from '../controllers/gameController.js';
-import auth from '../middleware/auth.js';
+const express = require('express');
+const { body } = require('express-validator');
+const rateLimit = require('express-rate-limit');
+const { placeBet, cancelBet } = require('../controllers/gameController');
+const auth = require('../middleware/authMiddleware');
 
 const router = express.Router();
+const betLimiter = rateLimit({ windowMs: 60 * 1000, max: 20 });
 
-// Лимитер для ставок: 20 запросов в минуту
-const betLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 минута
-  max: 20,
-  message: 'Слишком много запросов на ставки. Попробуйте позже.',
-  skip: (req) => {
-    // Админы не ограничены
-    return req.user && req.user.role === 'admin';
-  }
-});
+router.post(
+  '/bet',
+  auth,
+  [
+    body('ballNumber').isIn(['0','1','2','3','4','5','6','7','8','9','joker']),
+    body('amount').isInt({ min: 1 })
+  ],
+  betLimiter,
+  placeBet
+);
 
-router.post('/bet', auth, betLimiter, placeBet);
-router.get('/time', getTimeStatus);
+router.delete('/bet/:id', auth, cancelBet);
 
-export default router;
+module.exports = router;
