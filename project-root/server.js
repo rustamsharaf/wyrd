@@ -38,3 +38,4 @@ import socialRoutes from './src/routes/socialRoutes.js';
 
 // ... конфигурация ...
 app.use('/api/users', socialRoutes);
+app.use('/api/admin', require('./src/routes/adminRoutes'));

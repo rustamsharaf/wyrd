@@ -77,3 +77,11 @@ module.exports = function setupSocketHandlers() {
     socket.on('disconnect', () => logger.info(`Socket ${socket.id} disconnected`));
   });
 };
+io.on('connection', socket => {
+  const rooms = ['global', socket.user?.country || 'global'];
+  rooms.forEach(r => socket.join(r));
+
+  socket.on('push', data => {
+    socket.emit('push', data);
+  });
+});
