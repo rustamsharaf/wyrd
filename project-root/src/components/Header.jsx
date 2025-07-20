@@ -1,8 +1,10 @@
 import React from 'react';
 import { useGameContext } from '../contexts/GameContext';
+import { useStoreContext } from '../contexts/StoreContext';
 
 const Header = () => {
   const { user } = useGameContext();
+  const { openStore } = useStoreContext();
   
   return (
     <header className="bg-gray-900 text-white p-4 flex justify-between items-center shadow-md">
@@ -14,13 +16,21 @@ const Header = () => {
       </div>
       
       <div className="flex space-x-4">
+        <button 
+          onClick={openStore}
+          className="bg-yellow-600 hover:bg-yellow-700 px-3 py-1 rounded-lg flex items-center"
+        >
+          <span className="mr-2">🛒</span>
+          <span>Магазин</span>
+        </button>
+        
         <div className="bg-blue-600 px-3 py-1 rounded-lg flex items-center">
           <span className="mr-2">💰</span>
           <span>{user.currency}</span>
         </div>
         <div className="bg-purple-600 px-3 py-1 rounded-lg flex items-center">
           <span className="mr-2">🏆</span>
-          <span>{user.rating}</span>
+          <span>{user.ratingPoints}</span>
         </div>
       </div>
     </header>

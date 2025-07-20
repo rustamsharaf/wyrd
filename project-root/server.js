@@ -39,3 +39,8 @@ import socialRoutes from './src/routes/socialRoutes.js';
 // ... конфигурация ...
 app.use('/api/users', socialRoutes);
 app.use('/api/admin', require('./src/routes/adminRoutes'));
+// В server.js
+import storeRoutes from './src/routes/storeRoutes.js';
+
+// ... другие импорты ...
+app.use('/api/store', storeRoutes);
