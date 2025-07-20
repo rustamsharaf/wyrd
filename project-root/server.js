@@ -33,3 +33,8 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on ${PORT}`);
   startGameLoop();
 });
+// ... другие импорты ...
+import socialRoutes from './src/routes/socialRoutes.js';
+
+// ... конфигурация ...
+app.use('/api/users', socialRoutes);

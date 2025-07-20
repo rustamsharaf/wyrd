@@ -65,3 +65,14 @@ export const getIo = () => {
   }
   return io;
 };
+// ... другие импорты ...
+import { chatMessageHandler, getChatHistory } from './socket/handlers/chatHandler.js';
+
+// В обработчике подключения
+io.on('connection', (socket) => {
+  // ... существующий код ...
+  
+  // Обработчики чата
+  socket.on('chatMessage', (data) => chatMessageHandler(socket, data));
+  socket.on('getChatHistory', (country) => getChatHistory(socket, country));
+});
