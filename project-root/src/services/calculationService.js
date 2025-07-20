@@ -1,49 +1,95 @@
 import Bet from '../models/Bet.js';
 import User from '../models/User.js';
 import GameRound from '../models/GameRound.js';
+import Jackpot from '../models/Jackpot.js';
 import { getIo } from '../socket.js';
+import logger from '../logger.js';
 
-const COMMISSION = 0.10; // 10% комиссия
+const COMMISSION = parseFloat(process.env.CASINO_COMMISSION) || 0.10;
 
 async function calculateResults(roundId, winningBall) {
   try {
     const winningBallStr = winningBall.toString();
     
-    // Поиск ставок для раунда
+    // Находим все ставки для раунда
     const bets = await Bet.find({ round: roundId }).populate('user');
     const round = await GameRound.findById(roundId);
 
-    // Разделение ставок
+    // Получаем джекпот
+    let jackpot = await Jackpot.findOne();
+    if (!jackpot) {
+      jackpot = await Jackpot.create({ amount: 0 });
+    }
+
+    // Разделяем ставки
     const winningBets = bets.filter(bet => bet.ballNumber === winningBallStr);
     const losingBets = bets.filter(bet => bet.ballNumber !== winningBallStr);
 
-    // Расчет сумм
-    const totalWinningAmount = winningBets.reduce((sum, bet) => sum + bet.amount, 0);
+    // Общая сумма всех ставок
     const totalRoundAmount = bets.reduce((sum, bet) => sum + bet.amount, 0);
     const prizePool = totalRoundAmount * (1 - COMMISSION);
 
-    // Обработка выигрышных ставок
-    for (const bet of winningBets) {
-      const winAmount = totalWinningAmount > 0 
-        ? prizePool * (bet.amount / totalWinningAmount)
-        : 0;
-
-      const user = bet.user;
-      user.currency += winAmount;
-      user.ratingPoints += 10;
-
-      bet.winAmount = winAmount;
-      bet.isWin = true;
+    // Обработка джокера
+    if (winningBall === 'joker') {
+      // Распределение джекпота + призового пула
+      const totalJokerBets = winningBets.reduce((sum, bet) => sum + bet.amount, 0);
       
-      await bet.save();
-      await user.save();
+      for (const bet of winningBets) {
+        const winShare = totalJokerBets > 0 ? (bet.amount / totalJokerBets) : 0;
+        const winAmount = prizePool * winShare + jackpot.amount * winShare;
 
-      // Отправка обновления баланса
-      const io = getIo();
-      io.to(user._id.toString()).emit('balanceUpdate', {
-        currency: user.currency,
-        rating: user.ratingPoints
-      });
+        const user = bet.user;
+        user.currency += winAmount;
+        user.ratingPoints += 10;
+
+        bet.winAmount = winAmount;
+        bet.isWin = true;
+        
+        await bet.save();
+        await user.save();
+
+        // Отправка обновления баланса
+        const io = getIo();
+        io.to(user._id.toString()).emit('balanceUpdate', {
+          currency: user.currency,
+          rating: user.ratingPoints
+        });
+      }
+
+      // Сбрасываем джекпот
+      jackpot.amount = 0;
+      await jackpot.save();
+    } else {
+      // Начисление выигрышей по обычному шару
+      const totalWinningAmount = winningBets.reduce((sum, bet) => sum + bet.amount, 0);
+      
+      for (const bet of winningBets) {
+        const winShare = totalWinningAmount > 0 ? (bet.amount / totalWinningAmount) : 0;
+        const winAmount = prizePool * winShare;
+
+        const user = bet.user;
+        user.currency += winAmount;
+        user.ratingPoints += 10;
+
+        bet.winAmount = winAmount;
+        bet.isWin = true;
+        
+        await bet.save();
+        await user.save();
+
+        // Отправка обновления баланса
+        const io = getIo();
+        io.to(user._id.toString()).emit('balanceUpdate', {
+          currency: user.currency,
+          rating: user.ratingPoints
+        });
+      }
+
+      // Добавляем ставки на joker в джекпот
+      const jokerBets = bets.filter(bet => bet.ballNumber === 'joker');
+      const jokerAmount = jokerBets.reduce((sum, bet) => sum + bet.amount, 0);
+      jackpot.amount += jokerAmount;
+      await jackpot.save();
     }
 
     // Обработка проигрышных ставок
@@ -57,27 +103,6 @@ async function calculateResults(roundId, winningBall) {
       }
       
       await user.save();
-    }
-
-    // Обработка джокера
-    if (winningBall === 'joker') {
-      const jackpot = totalRoundAmount * COMMISSION;
-      
-      if (winningBets.length > 0) {
-        const jackpotPerWinner = jackpot / winningBets.length;
-        
-        for (const bet of winningBets) {
-          const user = bet.user;
-          user.currency += jackpotPerWinner;
-          await user.save();
-          
-          const io = getIo();
-          io.to(user._id.toString()).emit('balanceUpdate', {
-            currency: user.currency,
-            jackpot: jackpotPerWinner
-          });
-        }
-      }
     }
 
     // Обновление раунда
@@ -96,10 +121,10 @@ async function calculateResults(roundId, winningBall) {
       }))
     });
 
-    console.log(`✅ Round ${roundId} results calculated`);
+    logger.info(`Результаты раунда ${roundId} обработаны`);
     
   } catch (err) {
-    console.error('Calculation error:', err);
+    logger.error(`Ошибка расчета результатов: ${err.message}`, { roundId });
   }
 }
 
