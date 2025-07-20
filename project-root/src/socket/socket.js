@@ -8,33 +8,47 @@ let io = null;
 export const initSocket = (server) => {
   io = socketIo(server, {
     cors: {
-      origin: "*", // Настройте под свой домен в продакшене
-      methods: ["GET", "POST"]
+      origin: process.env.CLIENT_URL || "*",
+      methods: ["GET", "POST"],
+      credentials: true
     }
   });
 
-  // Аутентификация подключений
-  io.use((socket, next) => {
-    const token = socket.handshake.auth.token;
-    if (!token) return next(new Error('Требуется аутентификация'));
-    
+  // Middleware аутентификации
+  io.use(async (socket, next) => {
     try {
+      const token = socket.handshake.auth.token;
+      if (!token) {
+        return next(new Error('Authentication error: Token is required'));
+      }
+
+      // Верификация токена
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      socket.userId = decoded.userId;
+      
+      // Поиск пользователя в БД
+      const user = await User.findById(decoded.userId);
+      if (!user) {
+        return next(new Error('Authentication error: User not found'));
+      }
+
+      // Добавляем ID пользователя в сокет
+      socket.userId = user._id.toString();
       next();
     } catch (err) {
-      next(new Error('Недействительный токен'));
+      next(new Error('Authentication error: Invalid token'));
     }
   });
 
+  // Обработка подключений
   io.on('connection', (socket) => {
-    console.log(`⚡️ Сокет подключен: ${socket.id} (Пользователь: ${socket.userId})`);
-    
-    // Присоединяем пользователя к своей комнате
+    console.log(`⚡️ New socket connection: ${socket.id} for user ${socket.userId}`);
+
+    // Присоединяем сокет к комнате пользователя
     socket.join(socket.userId);
-    
+
+    // Обработка отключения
     socket.on('disconnect', () => {
-      console.log(`🔌 Сокет отключен: ${socket.id}`);
+      console.log(`🔥 Socket disconnected: ${socket.id}`);
     });
   });
 
@@ -43,6 +57,8 @@ export const initSocket = (server) => {
 
 // Получение экземпляра Socket.io
 export const getIo = () => {
-  if (!io) throw new Error('Socket.io не инициализирован');
+  if (!io) {
+    throw new Error('Socket.io not initialized!');
+  }
   return io;
 };
