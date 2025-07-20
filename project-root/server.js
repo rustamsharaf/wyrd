@@ -1,66 +1,35 @@
-import express from 'express';
-import http from 'http';
-import dotenv from 'dotenv';
-import cors from 'cors';
-import cookieParser from 'cookie-parser';
-import { initSocket } from './src/socket.js';
-import connectDB from './src/config/db.js';
-import authRoutes from './src/routes/authRoutes.js';
-import gameRoutes from './src/routes/gameRoutes.js';
-import adminRoutes from './src/routes/adminRoutes.js';
-import { startLeaderboardUpdates } from './src/services/leaderboardService.js';
-import errorHandler from './src/middleware/errorHandler.js';
-import logger from './src/logger.js';
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
 
-dotenv.config();
+const connectDB = require('./src/config/db');
+const errorHandler = require('./src/middleware/errorHandler');
+const { startGameLoop } = require('./src/services/gameLoopService');
+const { initSocket, setupSocketHandlers } = require('./src/socket');
 
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(cors({
-  origin: process.env.CLIENT_URL,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
-}));
+app.use(cors({ origin: process.env.CLIENT_URL || '*' }));
 app.use(express.json());
-app.use(cookieParser());
 
-// Добавляем логгер в запросы
-app.use((req, res, next) => {
-  req.logger = logger;
-  next();
-});
+// Routes
+app.use('/api/auth', require('./src/routes/authRoutes'));
+app.use('/api/game', require('./src/routes/gameRoutes'));
+app.use('/api/store', require('./src/routes/storeRoutes'));
+app.use('/api/admin', require('./src/routes/adminRoutes'));
 
-// Подключение к базе данных
+// Socket & DB
 connectDB();
+const io = initSocket(server);
+setupSocketHandlers(io);
 
-// Инициализация Socket.io
-initSocket(server);
-
-// Маршруты
-app.use('/api/auth', authRoutes);
-app.use('/api/game', gameRoutes);
-app.use('/api/admin', adminRoutes);
-
-// Обработчик ошибок
+// Error handler
 app.use(errorHandler);
 
-// Старт сервера
+const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-  logger.info(`🚀 Сервер запущен на порту ${PORT}`);
-  
-  // Запускаем обновление таблицы лидеров
-  startLeaderboardUpdates();
-  
-  // Запуск игрового цикла
-  if (process.env.ENABLE_GAME_LOOP === 'true') {
-    import('./src/services/gameLoopService.js')
-      .then(module => {
-        module.startGameLoop();
-        logger.info('Игровой цикл запущен');
-      })
-      .catch(err => logger.error('Ошибка запуска игрового цикла:', err));
-  }
+  console.log(`🚀 Server running on ${PORT}`);
+  startGameLoop();
 });

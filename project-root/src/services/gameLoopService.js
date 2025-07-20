@@ -159,3 +159,8 @@ export default {
   updateConfig,
   getCurrentStatus
 };
+const cfg = {
+  BETTING: Number(process.env.BETTING_PHASE || 35000),
+  PROCESS: Number(process.env.RESULT_PHASE  || 10000),
+  BREAK:   Number(process.env.BREAK_PHASE   || 17500)
+};

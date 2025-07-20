@@ -1,15 +1,7 @@
-import mongoose from 'mongoose';
+const mongoose = require('mongoose');
 
 const jackpotSchema = new mongoose.Schema({
-  amount: {
-    type: Number,
-    default: 0
-  }
-}, { 
-  timestamps: true,
-  versionKey: false 
-});
+  pool: { type: Number, default: 0 }
+}, { timestamps: true });
 
-const Jackpot = mongoose.model('Jackpot', jackpotSchema);
-
-export default Jackpot;
+module.exports = mongoose.model('Jackpot', jackpotSchema);

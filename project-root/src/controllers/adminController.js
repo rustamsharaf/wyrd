@@ -1,34 +1,17 @@
-import gameLoopService from '../services/gameLoopService.js';
-import logger from '../logger.js';
+const GameRound = require('../models/GameRound');
+const { updateConfig } = require('../services/gameLoopService');
 
-export const updateConfig = async (req, res) => {
-  try {
-    // Проверка роли
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Доступ запрещен' });
-    }
+exports.updateConfig = async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
-    const { BETTING_PHASE, RESULT_PHASE, BREAK_PHASE, MAX_BET } = req.body;
-    const newConfig = {};
+  const { BETTING_PHASE, RESULT_PHASE, BREAK_PHASE, MAX_BET } = req.body;
+  const newCfg = {
+    BETTING_PHASE: BETTING_PHASE || Number(process.env.BETTING_PHASE),
+    RESULT_PHASE:  RESULT_PHASE  || Number(process.env.RESULT_PHASE),
+    BREAK_PHASE:   BREAK_PHASE   || Number(process.env.BREAK_PHASE),
+    MAX_BET:       MAX_BET       || Number(process.env.MAX_BET)
+  };
 
-    if (BETTING_PHASE) newConfig.BETTING_PHASE = parseInt(BETTING_PHASE);
-    if (RESULT_PHASE) newConfig.RESULT_PHASE = parseInt(RESULT_PHASE);
-    if (BREAK_PHASE) newConfig.BREAK_PHASE = parseInt(BREAK_PHASE);
-    
-    // Обновляем игровой цикл
-    if (Object.keys(newConfig).length > 0) {
-      gameLoopService.updateConfig(newConfig);
-    }
-
-    // Обновляем MAX_BET
-    if (MAX_BET) {
-      process.env.MAX_BET = MAX_BET;
-    }
-
-    logger.info('Конфигурация обновлена', { newConfig, admin: req.user._id });
-    res.json({ success: true, message: 'Конфигурация обновлена' });
-  } catch (err) {
-    logger.error(`Ошибка обновления конфига: ${err.message}`, { admin: req.user?._id });
-    res.status(500).json({ message: 'Ошибка сервера' });
-  }
+  updateConfig(newCfg);
+  res.json({ success: true, config: newCfg });
 };

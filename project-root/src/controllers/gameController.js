@@ -1,139 +1,63 @@
-import Joi from 'joi';
-import mongoose from 'mongoose';
-import Bet from '../models/Bet.js';
-import User from '../models/User.js';
-import GameRound from '../models/GameRound.js';
-import { getIo } from '../socket.js';
-import gameLoopService from '../services/gameLoopService.js';
-import logger from '../logger.js';
+const { validationResult } = require('express-validator');
+const mongoose = require('mongoose');
+const Bet = require('../models/Bet');
+const User = require('../models/User');
+const GameRound = require('../models/GameRound');
+const { io } = require('../socket');
+const jackpotService = require('../services/jackpotService');
 
-const betSchema = Joi.object({
-  ballNumber: Joi.string().valid('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'joker').required(),
-  amount: Joi.number().integer().min(1).required(),
-  isSeriesBet: Joi.boolean().default(false),
-  seriesId: Joi.when('isSeriesBet', {
-    is: true,
-    then: Joi.string().required(),
-    otherwise: Joi.string().optional()
-  })
-});
+exports.placeBet = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ success: false, message: errors.array()[0].msg });
 
-export const placeBet = async (req, res) => {
+  const { ballNumber, amount, isSeriesBet = false, seriesId = null } = req.body;
+  const maxBet = Number(process.env.MAX_BET || 50000);
+
+  if (amount > maxBet) return res.status(400).json({ success: false, message: `Максимальная ставка: ${maxBet}` });
+
   const session = await mongoose.startSession();
-  session.startTransaction();
-  
   try {
-    const user = req.user;
-    const { error, value } = betSchema.validate(req.body);
-    
-    if (error) {
-      throw new Error(error.details[0].message);
-    }
+    await session.withTransaction(async () => {
+      const user = await User.findById(req.user.id).session(session);
+      if (!user) throw new Error('Пользователь не найден');
+      if (user.currency < amount) throw new Error('Недостаточно средств');
 
-    const { ballNumber, amount, isSeriesBet, seriesId } = value;
+      const round = await GameRound.findOne({ status: 'betting' }).session(session);
+      if (!round) throw new Error('Раунд не активен');
 
-    // Проверка лимита ставки
-    if (amount > parseInt(process.env.MAX_BET)) {
-      throw new Error(`Максимальная сумма ставки ${process.env.MAX_BET}`);
-    }
+      await User.findByIdAndUpdate(req.user.id, { $inc: { currency: -amount } }).session(session);
+      const bet = await Bet.create([{
+        roundId: round._id,
+        userId: user._id,
+        selectedBall: ballNumber,
+        amount,
+        isSeriesBet,
+        seriesId
+      }], { session });
 
-    // Получаем актуального пользователя в сессии
-    const freshUser = await User.findById(user._id).session(session);
-    if (!freshUser) {
-      throw new Error('Пользователь не найден');
-    }
+      await GameRound.findByIdAndUpdate(round._id, { $inc: { totalBetAmount: amount } }).session(session);
 
-    if (freshUser.currency < amount) {
-      throw new Error('Недостаточно средств');
-    }
+      // Джекпот
+      if (ballNumber === 'joker') await jackpotService.addToJackpot(amount);
 
-    // Поиск активного раунда
-    const currentRound = await GameRound.findOne({ status: 'betting' }).session(session);
-    if (!currentRound) {
-      throw new Error('Прием ставок завершен');
-    }
+      // WebSocket-обновление
+      io.emit('betUpdate', await getBetStats(round._id));
 
-    // Создаем ставку
-    const bet = new Bet({
-      user: freshUser._id,
-      round: currentRound._id,
-      ballNumber,
-      amount,
-      isSeriesBet,
-      seriesId
+      res.json({ success: true, betId: bet[0]._id, newBalance: user.currency - amount });
     });
-
-    // Списание средств
-    freshUser.currency -= amount;
-    await freshUser.save({ session });
-
-    // Сохраняем ставку
-    await bet.save({ session });
-
-    // Обновляем общую сумму ставок в раунде
-    currentRound.totalBetAmount = (currentRound.totalBetAmount || 0) + amount;
-    
-    // Обновляем сумму ставок по конкретному шару
-    const betsByBall = currentRound.betsByBall || new Map();
-    const currentBallAmount = betsByBall.get(ballNumber) || 0;
-    betsByBall.set(ballNumber, currentBallAmount + amount);
-    currentRound.betsByBall = betsByBall;
-    
-    await currentRound.save({ session });
-
-    // Фиксируем транзакцию
-    await session.commitTransaction();
-    session.endSession();
-
-    // Рассчитываем распределение ставок в процентах
-    const distribution = {};
-    for (const [ball, ballAmount] of betsByBall.entries()) {
-      distribution[ball] = parseFloat(((ballAmount / currentRound.totalBetAmount) * 100).toFixed(2));
-    }
-
-    // Отправляем обновление через сокет
-    const io = getIo();
-    io.emit('betUpdate', {
-      roundId: currentRound._id,
-      totalBetAmount: currentRound.totalBetAmount,
-      betsDistribution: distribution
-    });
-
-    // Отправляем обновление баланса конкретному пользователю
-    io.to(freshUser._id.toString()).emit('balanceUpdate', {
-      currency: freshUser.currency
-    });
-
-    res.status(200).json({
-      success: true,
-      betId: bet._id,
-      newBalance: freshUser.currency
-    });
-
   } catch (err) {
-    await session.abortTransaction();
+    res.status(400).json({ success: false, message: err.message });
+  } finally {
     session.endSession();
-    logger.error(`Ошибка ставки: ${err.message}`, { userId: req.user?._id });
-    res.status(400).json({
-      success: false,
-      message: err.message
-    });
   }
 };
 
-export const getTimeStatus = async (req, res) => {
-  try {
-    const status = gameLoopService.getCurrentStatus();
-    
-    res.json({
-      timeLeft: status.timeLeft,
-      status: status.isBettingActive ? 'betting' : 'break'
-    });
-  } catch (err) {
-    logger.error(`Ошибка получения времени: ${err.message}`);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Ошибка получения статуса игры' 
-    });
-  }
-};
+// вспомогательная
+async function getBetStats(roundId) {
+  const bets = await Bet.find({ roundId });
+  const stats = {};
+  bets.forEach(b => {
+    stats[b.selectedBall] = (stats[b.selectedBall] || 0) + b.amount;
+  });
+  return stats;
+}

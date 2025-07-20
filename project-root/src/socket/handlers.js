@@ -54,3 +54,26 @@ export const thankGuideHandler = async (socket, guideId) => {
     logger.error(`Ошибка благодарности гиду: ${err.message}`, { userId: socket.userId });
   }
 };
+const { io } = require('./index');
+const User = require('../models/User');
+const logger = require('../utils/logger');
+
+module.exports = function setupSocketHandlers() {
+  io.on('connection', socket => {
+    logger.info(`Socket connected: ${socket.id}`);
+
+    // Чат по странам
+    socket.on('chatMessage', async ({ message, country }) => {
+      const user = await User.findById(socket.userId);
+      if (!user || user.country !== country) return;
+
+      io.to(country).emit('chatMessage', {
+        nickname: user.nickname,
+        message,
+        timestamp: new Date()
+      });
+    });
+
+    socket.on('disconnect', () => logger.info(`Socket ${socket.id} disconnected`));
+  });
+};
