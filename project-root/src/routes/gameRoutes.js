@@ -1,6 +1,7 @@
+// routes/gameRoutes.js
 import express from 'express';
-import auth from '../middleware/auth.js';
 import { placeBet } from '../controllers/gameController.js';
+import auth from '../middleware/auth.js'; // Предполагается, что authMiddleware экспортируется как auth
 
 const router = express.Router();
 
